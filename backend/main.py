@@ -287,11 +287,20 @@ def match_job(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to run job match.")
 
 @app.get("/api/history", response_model=List[schemas.HistoryResponseItem])
-def get_history(db: Session = Depends(get_db)):
+def get_history(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user)
+):
     """
     Returns lists of all stored resume analyses.
     """
-    analyses = db.query(models.Analysis).join(models.Resume).order_by(models.Analysis.created_at.desc()).all()
+    analyses = (
+        db.query(models.Analysis)
+        .join(models.Resume)
+        .filter(models.Resume.user_id == user.id)
+        .order_by(models.Analysis.created_at.desc())
+        .all()
+    )
     history = []
     for a in analyses:
         history.append({
