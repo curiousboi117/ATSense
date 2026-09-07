@@ -3,10 +3,13 @@ import tempfile
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
@@ -72,6 +75,14 @@ app.add_middleware(
 
 security = HTTPBearer()
 
+limiter = Limiter(key_func=get_remote_address)
+
+app.state.limiter = limiter
+app.add_exception_handler(
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler,
+)
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -109,7 +120,9 @@ def get_current_user(
     return user
 
 @app.post("/api/auth/login", response_model=schemas.TokenResponse)
+@limiter.limit("5/minute")
 def login(
+    request: Request,
     login_data: schemas.LoginRequest,
     db: Session = Depends(get_db),
 ):

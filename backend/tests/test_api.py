@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from auth import create_access_token, hash_password
 from database import Base, get_db
-from main import app
+from main import app, limiter
 from models import User, Resume, Analysis
 
 
@@ -112,6 +112,31 @@ def test_login_with_invalid_password():
     )
 
     assert response.status_code == 401
+
+
+def test_login_rate_limit():
+    limiter._storage.reset()
+
+    for _ in range(5):
+        response = client.post(
+            "/api/auth/login",
+            json={
+                "username": TEST_USERNAME,
+                "password": "wrong_password",
+            },
+        )
+
+        assert response.status_code == 401
+
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "username": TEST_USERNAME,
+            "password": "wrong_password",
+        },
+    )
+
+    assert response.status_code == 429
 
 
 def test_protected_endpoint_requires_authentication():
