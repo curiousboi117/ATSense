@@ -1,5 +1,4 @@
 import os
-import json
 import tempfile
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +8,7 @@ from typing import List, Optional
 import models
 import schemas
 from database import engine, get_db, SessionLocal
+from config import settings
 from parser import parse_file
 from preprocessing import normalize_text
 from nlp_engine import extract_personal_info, detect_sections
@@ -19,18 +19,32 @@ from scoring_engine import calculate_ats_score
 from recommendation_engine import generate_recommendations
 from report_generator import generate_pdf_report
 from utils import logger
+from contextlib import asynccontextmanager
 
 # Initialize database tables
-models.Base.metadata.create_all(bind=engine)
 
-# Seed default user on startup
-db = SessionLocal()
-default_user = db.query(models.User).filter_by(id=1).first()
-if not default_user:
-    default_user = models.User(id=1, username="ats_user", email="student@atsense.edu")
-    db.add(default_user)
-    db.commit()
-db.close()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize database tables
+    models.Base.metadata.create_all(bind=engine)
+
+    # Seed default user
+    db = SessionLocal()
+    try:
+        default_user = db.query(models.User).filter_by(id=1).first()
+        if not default_user:
+            default_user = models.User(
+                id=1,
+                username="ats_user",
+                email="student@atsense.edu",
+            )
+            db.add(default_user)
+            db.commit()
+    finally:
+        db.close()
+
+    yield
 
 # Start semantic model load asynchronously/background
 try:
@@ -49,17 +63,12 @@ except Exception as e:
 app = FastAPI(
     title="ATSense API",
     description="Explainable NLP & Machine Learning Resume Parser and ATS Analyzer API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS configuration
-cors_origins_env = os.getenv("CORS_ORIGINS")
-origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
-if cors_origins_env:
-    try:
-        origins = json.loads(cors_origins_env)
-    except Exception:
-        pass
+origins = settings.cors_list
 
 app.add_middleware(
     CORSMiddleware,

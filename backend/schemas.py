@@ -1,36 +1,41 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+
 
 class UserBase(BaseModel):
     username: str
     email: Optional[str] = None
 
+
 class UserCreate(UserBase):
     pass
+
 
 class UserResponse(UserBase):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class ResumeBase(BaseModel):
     filename: str
     file_size: int
     version: int
 
+
 class ResumeResponse(ResumeBase):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class JobDescriptionCreate(BaseModel):
     text: str
     title: Optional[str] = "Target Role"
+
 
 class JobDescriptionResponse(BaseModel):
     id: int
@@ -38,8 +43,8 @@ class JobDescriptionResponse(BaseModel):
     text: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class AnalysisResponse(BaseModel):
     id: int
@@ -57,8 +62,8 @@ class AnalysisResponse(BaseModel):
     similarity_metrics: Optional[Dict[str, Any]] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class HistoryResponseItem(BaseModel):
     id: int
@@ -69,6 +74,7 @@ class HistoryResponseItem(BaseModel):
     job_title: Optional[str] = None
     created_at: datetime
 
+
 class CompareItem(BaseModel):
     version: int
     ats_score: float
@@ -77,11 +83,13 @@ class CompareItem(BaseModel):
     issues_count: int
     created_at: datetime
 
+
 class CompareResponse(BaseModel):
     history: List[CompareItem]
     improvement: float
     issues_resolved: int
     issues_remaining: int
+
 
 class HealthResponse(BaseModel):
     status: str
