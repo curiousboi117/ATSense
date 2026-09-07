@@ -315,11 +315,23 @@ def get_history(
     return history
 
 @app.get("/api/analysis/{id}", response_model=schemas.AnalysisResponse)
-def get_analysis(id: int, db: Session = Depends(get_db)):
+def get_analysis(
+    id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user)
+):
     """
     Returns details of a specific analysis execution.
     """
-    a = db.query(models.Analysis).filter_by(id=id).first()
+    a = (
+        db.query(models.Analysis)
+        .join(models.Resume)
+        .filter(
+            models.Analysis.id == id,
+            models.Resume.user_id == user.id
+        )
+        .first()
+    )
     if not a:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis details not found.")
         
