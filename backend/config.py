@@ -2,6 +2,7 @@ import os
 from typing import List
 import json
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +27,12 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def validate_production_config(self):
+        if self.app_env.lower() == "production" and not self.jwt_secret_key:
+            raise ValueError("JWT_SECRET_KEY must be configured in production.")
+        return self
 
     @property
     def cors_list(self) -> List[str]:

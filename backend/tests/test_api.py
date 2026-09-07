@@ -12,7 +12,12 @@ from database import Base, get_db
 from main import app
 
 
-TEST_DATABASE_URL = "sqlite:///./tests/test_atsense.db"
+TEST_DATABASE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "test_atsense.db",
+)
+
+TEST_DATABASE_URL = f"sqlite:///{TEST_DATABASE_PATH}"
 
 test_engine = create_engine(
     TEST_DATABASE_URL,

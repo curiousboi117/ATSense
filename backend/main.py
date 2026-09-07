@@ -35,8 +35,6 @@ ALLOWED_RESUME_EXTENSIONS = {".pdf", ".docx"}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize application resources during startup."""
-    # Initialize database tables.
-    models.Base.metadata.create_all(bind=engine)
 
     # Load NLP and semantic models during application startup.
     try:
