@@ -15,7 +15,7 @@ import schemas
 from auth import create_access_token, decode_access_token, verify_password
 from ats_engine import run_ats_checks
 from config import settings
-from database import SessionLocal, engine, get_db
+from database import get_db
 from nlp_engine import detect_sections, extract_personal_info
 from parser import parse_file
 from preprocessing import normalize_text
