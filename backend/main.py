@@ -1,43 +1,52 @@
 import os
 import tempfile
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status
+from contextlib import asynccontextmanager
+from typing import List, Optional
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from starlette.background import BackgroundTask
+
 import models
 import schemas
-from database import engine, get_db, SessionLocal
+from ats_engine import run_ats_checks
 from config import settings
+from database import SessionLocal, engine, get_db
+from nlp_engine import detect_sections, extract_personal_info
 from parser import parse_file
 from preprocessing import normalize_text
-from nlp_engine import extract_personal_info, detect_sections
-from skill_extractor import extract_skills, get_flat_skills
-from ats_engine import run_ats_checks
-from similarity_engine import calculate_similarity_metrics, load_semantic_model
-from scoring_engine import calculate_ats_score
 from recommendation_engine import generate_recommendations
 from report_generator import generate_pdf_report
+from scoring_engine import calculate_ats_score
+from similarity_engine import calculate_similarity_metrics, load_semantic_model
+from skill_extractor import extract_skills, get_flat_skills
 from utils import logger
-from contextlib import asynccontextmanager
-
-# Initialize database tables
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # database initialization...
+    """Initialize application resources during startup."""
+    # Initialize database tables.
+    models.Base.metadata.create_all(bind=engine)
 
+    # Seed the default single-user account used by the current application.
     db = SessionLocal()
     try:
-        # ...
+        default_user = db.query(models.User).filter_by(id=1).first()
         if not default_user:
-            # ...
+            default_user = models.User(
+                id=1,
+                username="ats_user",
+                email="student@atsense.edu",
+            )
+            db.add(default_user)
             db.commit()
     finally:
         db.close()
 
-    # Load NLP and semantic models during application startup
+    # Load NLP and semantic models during application startup.
     try:
         load_semantic_model()
     except Exception as e:
@@ -59,6 +68,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 # CORS configuration
 origins = settings.cors_list
 
@@ -70,30 +80,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 def get_current_user(db: Session = Depends(get_db)):
+    """
+    Return the current application user.
+
+    This is an ownership abstraction for the current single-user architecture.
+    It is NOT a substitute for real authentication and should be replaced by
+    an authentication-backed dependency before multi-user production deployment.
+    """
     user = db.query(models.User).filter_by(id=1).first()
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account not available."
+            detail="User account not available.",
         )
 
     return user
 
+
+def get_owned_analysis(
+    analysis_id: int,
+    user: models.User,
+    db: Session,
+):
+    """Fetch an analysis only when it belongs to the current user."""
+    analysis = (
+        db.query(models.Analysis)
+        .join(models.Resume)
+        .filter(
+            models.Analysis.id == analysis_id,
+            models.Resume.user_id == user.id,
+        )
+        .first()
+    )
+
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Analysis details not found.",
+        )
+
+    return analysis
+
+
 @app.get("/api/health", response_model=schemas.HealthResponse)
 def health_check():
     """
-    Checks systems state and whether model dependencies are loaded.
+    Check application state and whether model dependencies are loaded.
     """
     from preprocessing import nlp
     from similarity_engine import model_loaded, model_name
+
+    nlp_ready = nlp is not None
+    models_ready = model_loaded and nlp_ready
+
     return {
         "status": "healthy",
-        "nlp_loaded": nlp is not None,
+        "nlp_loaded": nlp_ready,
         "model_loaded": model_loaded,
-        "model_name": model_name
+        "model_name": model_name,
     }
+
 
 @app.post("/api/upload", response_model=schemas.AnalysisResponse)
 async def upload_resume(
@@ -101,73 +150,96 @@ async def upload_resume(
     job_description: Optional[str] = Form(None),
     job_title: Optional[str] = Form("Target Role"),
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user)
+    user: models.User = Depends(get_current_user),
 ):
     """
-    Uploads a resume file (PDF/DOCX), processes parsing, text preprocessing, NLP tagging, 
-    skill taxonomy extraction, ATS auditing, scoring, and returns detailed results.
+    Upload a resume, process it, optionally match it against a job description,
+    and return the complete analysis.
     """
     try:
         content = await file.read()
         filename = file.filename
+
+        if not filename:
+            raise ValueError("A filename is required.")
+
         file_size = len(content)
-        
+
         # 1. Parsing
         parsed_doc = parse_file(content, filename)
         raw_text = parsed_doc["text"]
-        
+
         # 2. Text preprocessing
         normalized = normalize_text(raw_text)
-        
-        # 3. Versioning control: check existing resumes for this default user
-        existing_resumes = db.query(models.Resume).filter_by(user_id=user.id).all()
+
+        # 3. Versioning for the current user
+        existing_resumes = (
+            db.query(models.Resume)
+            .filter_by(user_id=user.id)
+            .all()
+        )
         next_version = len(existing_resumes) + 1
-        
-        # Save Resume to DB
+
+        # 4. Save resume
         db_resume = models.Resume(
             user_id=user.id,
             filename=filename,
             file_size=file_size,
             version=next_version,
-            extracted_text=normalized
+            extracted_text=normalized,
         )
         db.add(db_resume)
-        db.commit()
-        db.refresh(db_resume)
-        
-        # 4. Extract personal and section info
+        db.flush()
+
+        # 5. Extract personal and section information
         personal_info = extract_personal_info(normalized)
         sections = detect_sections(normalized)
-        
-        # 5. Extract skills
+
+        # 6. Extract skills
         skills = extract_skills(normalized)
         flat_skills = list(get_flat_skills(skills))
-        
-        # 6. Check Job Matching (if pasted)
+
+        # 7. Optional job matching
         db_jd = None
         similarity_metrics = None
+
         if job_description and job_description.strip():
+            cleaned_job_description = job_description.strip()
             db_jd = models.JobDescription(
                 user_id=user.id,
                 title=job_title or "Target Role",
-                text=job_description.strip()
+                text=cleaned_job_description,
             )
             db.add(db_jd)
-            db.commit()
-            db.refresh(db_jd)
-            
-            similarity_metrics = calculate_similarity_metrics(normalized, job_description, flat_skills)
-            
-        # 7. Run ATS checks
+            db.flush()
+
+            similarity_metrics = calculate_similarity_metrics(
+                normalized,
+                cleaned_job_description,
+                flat_skills,
+            )
+
+        # 8. ATS checks
         findings = run_ats_checks(normalized, sections, personal_info)
-        
-        # 8. Compute weighted score
-        score, breakdown = calculate_ats_score(sections, skills, findings, similarity_metrics)
-        
-        # 9. Recommendations
-        recommendations = generate_recommendations(normalized, sections, personal_info, findings, job_description or "")
-        
-        # Save analysis
+
+        # 9. Score
+        score, breakdown = calculate_ats_score(
+            sections,
+            skills,
+            findings,
+            similarity_metrics,
+        )
+
+        # 10. Recommendations
+        recommendations = generate_recommendations(
+            normalized,
+            sections,
+            personal_info,
+            findings,
+            job_description or "",
+        )
+
+        # 11. Save analysis
         db_analysis = models.Analysis(
             resume_id=db_resume.id,
             job_description_id=db_jd.id if db_jd else None,
@@ -177,12 +249,12 @@ async def upload_resume(
             skills=skills,
             ats_checks=findings,
             recommendations=recommendations,
-            similarity_metrics=similarity_metrics
+            similarity_metrics=similarity_metrics,
         )
         db.add(db_analysis)
         db.commit()
         db.refresh(db_analysis)
-        
+
         return {
             "id": db_analysis.id,
             "resume_id": db_resume.id,
@@ -197,14 +269,26 @@ async def upload_resume(
             "ats_checks": db_analysis.ats_checks,
             "recommendations": db_analysis.recommendations,
             "similarity_metrics": db_analysis.similarity_metrics,
-            "created_at": db_analysis.created_at
+            "created_at": db_analysis.created_at,
         }
-        
+
+    except HTTPException:
+        db.rollback()
+        raise
     except ValueError as ve:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
-    except Exception as e:
-        logger.error(f"System analysis failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An internal processing error occurred.")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve),
+        )
+    except Exception:
+        db.rollback()
+        logger.error("System analysis failed.", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal processing error occurred.",
+        )
+
 
 @app.post("/api/match-job", response_model=schemas.AnalysisResponse)
 def match_job(
@@ -212,45 +296,67 @@ def match_job(
     job_description: str = Form(...),
     job_title: Optional[str] = Form("Target Role"),
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user)
+    user: models.User = Depends(get_current_user),
 ):
     """
-    Reruns analysis for an existing resume matched against a new Job Description.
+    Re-run analysis for an existing resume against a new job description.
     """
     resume = (
-    db.query(models.Resume)
-    .filter_by(id=resume_id, user_id=user.id)
-    .first()
+        db.query(models.Resume)
+        .filter_by(id=resume_id, user_id=user.id)
+        .first()
     )
+
     if not resume:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found.")
-        
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found.",
+        )
+
+    if not job_description or not job_description.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Job description cannot be empty.",
+        )
+
     try:
+        cleaned_job_description = job_description.strip()
+
         db_jd = models.JobDescription(
             user_id=user.id,
             title=job_title or "Target Role",
-            text=job_description.strip()
+            text=cleaned_job_description,
         )
         db.add(db_jd)
-        db.commit()
-        db.refresh(db_jd)
-        
-        # Redetect structures from saved resume text
+        db.flush()
+
         normalized = resume.extracted_text
         personal_info = extract_personal_info(normalized)
         sections = detect_sections(normalized)
         skills = extract_skills(normalized)
         flat_skills = list(get_flat_skills(skills))
-        
-        # Calculate new matching
-        similarity_metrics = calculate_similarity_metrics(normalized, job_description, flat_skills)
+
+        similarity_metrics = calculate_similarity_metrics(
+            normalized,
+            cleaned_job_description,
+            flat_skills,
+        )
         findings = run_ats_checks(normalized, sections, personal_info)
-        
-        # Score changes because JD is now active (different weights)
-        score, breakdown = calculate_ats_score(sections, skills, findings, similarity_metrics)
-        recommendations = generate_recommendations(normalized, sections, personal_info, findings, job_description)
-        
-        # Save new analysis
+
+        score, breakdown = calculate_ats_score(
+            sections,
+            skills,
+            findings,
+            similarity_metrics,
+        )
+        recommendations = generate_recommendations(
+            normalized,
+            sections,
+            personal_info,
+            findings,
+            cleaned_job_description,
+        )
+
         db_analysis = models.Analysis(
             resume_id=resume.id,
             job_description_id=db_jd.id,
@@ -260,12 +366,12 @@ def match_job(
             skills=skills,
             ats_checks=findings,
             recommendations=recommendations,
-            similarity_metrics=similarity_metrics
+            similarity_metrics=similarity_metrics,
         )
         db.add(db_analysis)
         db.commit()
         db.refresh(db_analysis)
-        
+
         return {
             "id": db_analysis.id,
             "resume_id": resume.id,
@@ -280,19 +386,28 @@ def match_job(
             "ats_checks": db_analysis.ats_checks,
             "recommendations": db_analysis.recommendations,
             "similarity_metrics": db_analysis.similarity_metrics,
-            "created_at": db_analysis.created_at
+            "created_at": db_analysis.created_at,
         }
-    except Exception as e:
-        logger.error(f"Job matching failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to run job match.")
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        logger.error("Job matching failed.", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to run job match.",
+        )
+
 
 @app.get("/api/history", response_model=List[schemas.HistoryResponseItem])
 def get_history(
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user)
+    user: models.User = Depends(get_current_user),
 ):
     """
-    Returns lists of all stored resume analyses.
+    Return analyses belonging only to the current user.
     """
     analyses = (
         db.query(models.Analysis)
@@ -301,40 +416,32 @@ def get_history(
         .order_by(models.Analysis.created_at.desc())
         .all()
     )
-    history = []
-    for a in analyses:
-        history.append({
+
+    return [
+        {
             "id": a.id,
             "resume_id": a.resume_id,
             "filename": a.resume.filename,
             "version": a.resume.version,
             "ats_score": a.ats_score,
             "job_title": a.job_description.title if a.job_description else None,
-            "created_at": a.created_at
-        })
-    return history
+            "created_at": a.created_at,
+        }
+        for a in analyses
+    ]
+
 
 @app.get("/api/analysis/{id}", response_model=schemas.AnalysisResponse)
 def get_analysis(
     id: int,
     db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user)
+    user: models.User = Depends(get_current_user),
 ):
     """
-    Returns details of a specific analysis execution.
+    Return a specific analysis only when it belongs to the current user.
     """
-    a = (
-        db.query(models.Analysis)
-        .join(models.Resume)
-        .filter(
-            models.Analysis.id == id,
-            models.Resume.user_id == user.id
-        )
-        .first()
-    )
-    if not a:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis details not found.")
-        
+    a = get_owned_analysis(id, user, db)
+
     return {
         "id": a.id,
         "resume_id": a.resume_id,
@@ -349,18 +456,30 @@ def get_analysis(
         "ats_checks": a.ats_checks,
         "recommendations": a.recommendations,
         "similarity_metrics": a.similarity_metrics,
-        "created_at": a.created_at
+        "created_at": a.created_at,
     }
 
+
+def _delete_temp_file(path: str) -> None:
+    """Remove a generated report after the response has been sent."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError as e:
+        logger.warning(f"Failed to remove temporary report {path}: {e}")
+
+
 @app.get("/api/report/{id}/pdf")
-def download_pdf_report(id: int, db: Session = Depends(get_db)):
+def download_pdf_report(
+    id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
     """
-    Renders and serves a PDF download of the analysis results.
+    Generate and serve a PDF report for an owned analysis.
     """
-    a = db.query(models.Analysis).filter_by(id=id).first()
-    if not a:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis details not found.")
-        
+    a = get_owned_analysis(id, user, db)
+
     report_data = {
         "filename": a.resume.filename,
         "version": a.resume.version,
@@ -370,36 +489,44 @@ def download_pdf_report(id: int, db: Session = Depends(get_db)):
         "skills": a.skills,
         "ats_checks": a.ats_checks,
         "recommendations": a.recommendations,
-        "similarity_metrics": a.similarity_metrics
+        "similarity_metrics": a.similarity_metrics,
     }
-    
-    # Save PDF report to temporary file and stream it
+
     temp_dir = tempfile.gettempdir()
     pdf_filename = f"ATSense_Report_v{a.resume.version}_{a.id}.pdf"
     output_path = os.path.join(temp_dir, pdf_filename)
-    
+
     try:
         generate_pdf_report(report_data, output_path)
+
         return FileResponse(
-            path=output_path, 
-            media_type="application/pdf", 
-            filename=pdf_filename
+            path=output_path,
+            media_type="application/pdf",
+            filename=pdf_filename,
+            background=BackgroundTask(_delete_temp_file, output_path),
         )
-    except Exception as e:
-        logger.error(f"PDF compilation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to compile PDF report.")
+    except Exception:
+        _delete_temp_file(output_path)
+        logger.error("PDF compilation failed.", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to compile PDF report.",
+        )
+
 
 @app.get("/api/report/{id}/json")
-def download_json_report(id: int, db: Session = Depends(get_db)):
+def download_json_report(
+    id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
     """
-    Exports structured resume analysis as JSON.
+    Export structured analysis JSON for an owned analysis.
     """
-    a = db.query(models.Analysis).filter_by(id=id).first()
-    if not a:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis details not found.")
-        
+    a = get_owned_analysis(id, user, db)
+
     export = {
-        "atsense_version": "1.0.0",
+        "atsense_version": app.version,
         "ats_score": a.ats_score,
         "score_breakdown": a.score_breakdown,
         "personal_info": a.personal_info,
@@ -411,40 +538,101 @@ def download_json_report(id: int, db: Session = Depends(get_db)):
             "resume_filename": a.resume.filename,
             "resume_version": a.resume.version,
             "created_at": str(a.created_at),
-            "job_title": a.job_description.title if a.job_description else "None"
-        }
+            "job_title": a.job_description.title if a.job_description else None,
+        },
     }
-    return JSONResponse(content=export, headers={"Content-Disposition": f"attachment; filename=ATSense_Report_v{a.resume.version}.json"})
+
+    return JSONResponse(
+        content=export,
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=ATSense_Report_v{a.resume.version}.json"
+            )
+        },
+    )
+
 
 @app.delete("/api/resume/{id}")
-def delete_resume_data(id: int, db: Session = Depends(get_db)):
+def delete_resume_data(
+    id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
     """
-    Deletes resume records and cascade deletes its analyses.
+    Delete a resume and its associated analyses only when owned by the user.
     """
-    resume = db.query(models.Resume).filter_by(id=id).first()
+    resume = (
+        db.query(models.Resume)
+        .filter_by(id=id, user_id=user.id)
+        .first()
+    )
+
     if not resume:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found.",
+        )
+
     try:
         db.delete(resume)
         db.commit()
-        return {"status": "success", "message": "Resume and analysis data deleted."}
-    except Exception as e:
-        logger.error(f"Deletion failed: {e}")
+        return {
+            "status": "success",
+            "message": "Resume and analysis data deleted.",
+        }
+    except Exception:
+        logger.error("Deletion failed.", exc_info=True)
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Deletion failed.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Deletion failed.",
+        )
+
 
 @app.post("/api/reset-all")
-def reset_database(db: Session = Depends(get_db)):
+def reset_database(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
     """
-    Wipes all resumes, analyses, and JDs for demonstration resets.
+    Reset the current user's resumes, analyses, and job descriptions.
+
+    This keeps the existing demo endpoint behavior for the current single-user
+    application without deleting data belonging to other users.
     """
     try:
-        db.query(models.Analysis).delete()
-        db.query(models.Resume).delete()
-        db.query(models.JobDescription).delete()
+        resume_ids = [
+            row[0]
+            for row in (
+                db.query(models.Resume.id)
+                .filter(models.Resume.user_id == user.id)
+                .all()
+            )
+        ]
+
+        if resume_ids:
+            db.query(models.Analysis).filter(
+                models.Analysis.resume_id.in_(resume_ids)
+            ).delete(synchronize_session=False)
+
+            db.query(models.Resume).filter(
+                models.Resume.id.in_(resume_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(models.JobDescription).filter(
+            models.JobDescription.user_id == user.id
+        ).delete(synchronize_session=False)
+
         db.commit()
-        return {"status": "success", "message": "All database histories reset successfully."}
-    except Exception as e:
-        logger.error(f"Database reset failed: {e}")
+
+        return {
+            "status": "success",
+            "message": "All database histories reset successfully.",
+        }
+    except Exception:
+        logger.error("Database reset failed.", exc_info=True)
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Reset failed.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Reset failed.",
+        )
