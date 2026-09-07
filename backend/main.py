@@ -211,17 +211,21 @@ def match_job(
     resume_id: int,
     job_description: str = Form(...),
     job_title: Optional[str] = Form("Target Role"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user)
 ):
     """
     Reruns analysis for an existing resume matched against a new Job Description.
     """
-    resume = db.query(models.Resume).filter_by(id=resume_id).first()
+    resume = (
+    db.query(models.Resume)
+    .filter_by(id=resume_id, user_id=user.id)
+    .first()
+    )
     if not resume:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found.")
         
     try:
-        user = db.query(models.User).filter_by(id=1).first()
         db_jd = models.JobDescription(
             user_id=user.id,
             title=job_title or "Target Role",
