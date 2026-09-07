@@ -26,23 +26,28 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize database tables
-    models.Base.metadata.create_all(bind=engine)
+    # database initialization...
 
-    # Seed default user
     db = SessionLocal()
     try:
-        default_user = db.query(models.User).filter_by(id=1).first()
+        # ...
         if not default_user:
-            default_user = models.User(
-                id=1,
-                username="ats_user",
-                email="student@atsense.edu",
-            )
-            db.add(default_user)
+            # ...
             db.commit()
     finally:
         db.close()
+
+    # Load NLP and semantic models during application startup
+    try:
+        load_semantic_model()
+    except Exception as e:
+        logger.error(f"Semantic model loading failed: {e}")
+
+    try:
+        from preprocessing import get_nlp
+        get_nlp()
+    except Exception as e:
+        logger.error(f"spaCy model loading failed: {e}")
 
     yield
 
