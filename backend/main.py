@@ -51,19 +51,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-# Start semantic model load asynchronously/background
-try:
-    load_semantic_model()
-except Exception as e:
-    logger.error(f"Background loading of semantic model failed: {e}")
-
-# Pre-load spaCy language model
-try:
-    from preprocessing import get_nlp
-    get_nlp()
-except Exception as e:
-    logger.error(f"Background loading of spaCy model failed: {e}")
-
 
 app = FastAPI(
     title="ATSense API",
