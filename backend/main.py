@@ -70,6 +70,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def get_current_user(db: Session = Depends(get_db)):
+    user = db.query(models.User).filter_by(id=1).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account not available."
+        )
+
+    return user
+
 @app.get("/api/health", response_model=schemas.HealthResponse)
 def health_check():
     """
