@@ -25,6 +25,11 @@ from skill_extractor import extract_skills, get_flat_skills
 from utils import logger
 
 
+# Upload safety limits
+MAX_RESUME_SIZE = 5 * 1024 * 1024  # 5 MiB
+ALLOWED_RESUME_EXTENSIONS = {".pdf", ".docx"}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize application resources during startup."""
@@ -127,18 +132,12 @@ def get_owned_analysis(
 
 @app.get("/api/health", response_model=schemas.HealthResponse)
 def health_check():
-    """
-    Check application state and whether model dependencies are loaded.
-    """
     from preprocessing import nlp
     from similarity_engine import model_loaded, model_name
 
-    nlp_ready = nlp is not None
-    models_ready = model_loaded and nlp_ready
-
     return {
         "status": "healthy",
-        "nlp_loaded": nlp_ready,
+        "nlp_loaded": nlp is not None,
         "model_loaded": model_loaded,
         "model_name": model_name,
     }
@@ -164,6 +163,16 @@ async def upload_resume(
             raise ValueError("A filename is required.")
 
         file_size = len(content)
+
+        if file_size == 0:
+            raise ValueError("The uploaded file is empty.")
+
+        if file_size > MAX_RESUME_SIZE:
+            raise ValueError("Resume file size must not exceed 5 MB.")
+
+        extension = os.path.splitext(filename)[1].lower()
+        if extension not in ALLOWED_RESUME_EXTENSIONS:
+            raise ValueError("Only PDF and DOCX resume files are supported.")
 
         # 1. Parsing
         parsed_doc = parse_file(content, filename)
