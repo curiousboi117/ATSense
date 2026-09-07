@@ -7,9 +7,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from auth import create_access_token
+from auth import create_access_token, hash_password
 from database import Base, get_db
 from main import app
+from models import User
 
 
 TEST_DATABASE_PATH = os.path.join(
@@ -41,21 +42,28 @@ def override_get_db():
 
 app.dependency_overrides[get_db] = override_get_db
 
-from models import User
 
 TEST_USER_ID = 1
+TEST_USERNAME = "test_user"
+TEST_PASSWORD = "test_password_123"
 
 Base.metadata.create_all(bind=test_engine)
 
 with TestingSessionLocal() as db:
-    if db.query(User).filter(User.id == TEST_USER_ID).first() is None:
+    user = db.query(User).filter(User.id == TEST_USER_ID).first()
+
+    if user is None:
         db.add(
             User(
                 id=TEST_USER_ID,
-                username="test_user",
+                username=TEST_USERNAME,
                 email="test@example.com",
+                password_hash=hash_password(TEST_PASSWORD),
             )
         )
+        db.commit()
+    elif not user.password_hash:
+        user.password_hash = hash_password(TEST_PASSWORD)
         db.commit()
 
 
@@ -74,6 +82,52 @@ def test_health_endpoint():
     data = response.json()
 
     assert data["status"] == "healthy"
+
+
+def test_login_with_valid_credentials():
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "username": TEST_USERNAME,
+            "password": TEST_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+
+
+def test_login_with_invalid_password():
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "username": TEST_USERNAME,
+            "password": "wrong_password",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_protected_endpoint_requires_authentication():
+    response = client.get("/api/history")
+
+    assert response.status_code == 401
+
+
+def test_protected_endpoint_rejects_invalid_token():
+    response = client.get(
+        "/api/history",
+        headers={
+            "Authorization": "Bearer invalid-token",
+        },
+    )
+
+    assert response.status_code == 401
 
 
 def test_history_endpoint():
