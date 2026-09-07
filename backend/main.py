@@ -6,11 +6,13 @@ from typing import List, Optional
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
 import models
 import schemas
+from auth import create_access_token, decode_access_token, verify_password
 from ats_engine import run_ats_checks
 from config import settings
 from database import SessionLocal, engine, get_db
@@ -35,21 +37,6 @@ async def lifespan(app: FastAPI):
     """Initialize application resources during startup."""
     # Initialize database tables.
     models.Base.metadata.create_all(bind=engine)
-
-    # Seed the default single-user account used by the current application.
-    db = SessionLocal()
-    try:
-        default_user = db.query(models.User).filter_by(id=1).first()
-        if not default_user:
-            default_user = models.User(
-                id=1,
-                username="ats_user",
-                email="student@atsense.edu",
-            )
-            db.add(default_user)
-            db.commit()
-    finally:
-        db.close()
 
     # Load NLP and semantic models during application startup.
     try:
@@ -85,25 +72,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+security = HTTPBearer()
 
-def get_current_user(db: Session = Depends(get_db)):
-    """
-    Return the current application user.
 
-    This is an ownership abstraction for the current single-user architecture.
-    It is NOT a substitute for real authentication and should be replaced by
-    an authentication-backed dependency before multi-user production deployment.
-    """
-    user = db.query(models.User).filter_by(id=1).first()
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """Return the authenticated user from a valid JWT access token."""
+    token = credentials.credentials
+    user_id = decode_access_token(token)
+
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired authentication token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account not available.",
+            detail="User account not found.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     return user
 
+@app.post("/api/auth/login", response_model=schemas.TokenResponse)
+def login(
+    login_data: schemas.LoginRequest,
+    db: Session = Depends(get_db),
+):
+    """Authenticate a user and return a JWT access token."""
+    user = (
+        db.query(models.User)
+        .filter(models.User.username == login_data.username)
+        .first()
+    )
+
+    if not user or not user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not verify_password(login_data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    access_token = create_access_token(str(user.id))
+
+    return schemas.TokenResponse(access_token=access_token)
 
 def get_owned_analysis(
     analysis_id: int,

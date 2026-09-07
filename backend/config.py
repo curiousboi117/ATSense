@@ -1,3 +1,4 @@
+import os
 from typing import List
 import json
 
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     sentence_transformer_model: str = "all-MiniLM-L6-v2"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=os.path.join(os.path.dirname(__file__), ".env"),
         case_sensitive=False,
         extra="ignore",
     )

@@ -9,6 +9,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, default="ats_user")
     email = Column(String, nullable=True)
+    password_hash = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")

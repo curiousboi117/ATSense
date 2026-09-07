@@ -4,9 +4,61 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from auth import create_access_token
+from database import Base, get_db
 from main import app
 
+
+TEST_DATABASE_URL = "sqlite:///./tests/test_atsense.db"
+
+test_engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+)
+
+TestingSessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=test_engine,
+)
+
+
+def override_get_db():
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+app.dependency_overrides[get_db] = override_get_db
+
+from models import User
+
+TEST_USER_ID = 1
+
+Base.metadata.create_all(bind=test_engine)
+
+with TestingSessionLocal() as db:
+    if db.query(User).filter(User.id == TEST_USER_ID).first() is None:
+        db.add(
+            User(
+                id=TEST_USER_ID,
+                username="test_user",
+                email="test@example.com",
+            )
+        )
+        db.commit()
+
+
 client = TestClient(app)
+
+AUTH_HEADERS = {
+    "Authorization": f"Bearer {create_access_token(str(TEST_USER_ID))}"
+}
 
 
 def test_health_endpoint():
@@ -20,14 +72,14 @@ def test_health_endpoint():
 
 
 def test_history_endpoint():
-    response = client.get("/api/history")
+    response = client.get("/api/history", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     assert isinstance(response.json(), list)
 
 
 def test_reset_endpoint():
-    response = client.post("/api/reset-all")
+    response = client.post("/api/reset-all", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
@@ -36,6 +88,7 @@ def test_reset_endpoint():
 def test_upload_rejects_unsupported_format():
     response = client.post(
         "/api/upload",
+        headers=AUTH_HEADERS,
         files={
             "file": (
                 "resume.txt",
@@ -52,6 +105,7 @@ def test_upload_rejects_unsupported_format():
 def test_upload_rejects_empty_file():
     response = client.post(
         "/api/upload",
+        headers=AUTH_HEADERS,
         files={
             "file": (
                 "resume.pdf",
@@ -68,6 +122,7 @@ def test_upload_rejects_empty_file():
 def test_upload_rejects_fake_pdf():
     response = client.post(
         "/api/upload",
+        headers=AUTH_HEADERS,
         files={
             "file": (
                 "resume.pdf",
@@ -84,6 +139,7 @@ def test_upload_rejects_fake_pdf():
 def test_upload_rejects_fake_docx():
     response = client.post(
         "/api/upload",
+        headers=AUTH_HEADERS,
         files={
             "file": (
                 "resume.docx",
@@ -102,6 +158,7 @@ def test_upload_rejects_oversized_file():
 
     response = client.post(
         "/api/upload",
+        headers=AUTH_HEADERS,
         files={
             "file": (
                 "resume.pdf",
