@@ -100,7 +100,8 @@ async def upload_resume(
     file: UploadFile = File(...),
     job_description: Optional[str] = Form(None),
     job_title: Optional[str] = Form("Target Role"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user)
 ):
     """
     Uploads a resume file (PDF/DOCX), processes parsing, text preprocessing, NLP tagging, 
@@ -119,7 +120,6 @@ async def upload_resume(
         normalized = normalize_text(raw_text)
         
         # 3. Versioning control: check existing resumes for this default user
-        user = db.query(models.User).filter_by(id=1).first()
         existing_resumes = db.query(models.Resume).filter_by(user_id=user.id).all()
         next_version = len(existing_resumes) + 1
         
