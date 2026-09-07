@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from auth import create_access_token, hash_password
 from database import Base, get_db
 from main import app
-from models import User
+from models import User, Resume, Analysis
 
 
 TEST_DATABASE_PATH = os.path.join(
@@ -46,6 +46,7 @@ app.dependency_overrides[get_db] = override_get_db
 TEST_USER_ID = 1
 TEST_USERNAME = "test_user"
 TEST_PASSWORD = "test_password_123"
+
 
 Base.metadata.create_all(bind=test_engine)
 
@@ -144,6 +145,62 @@ def test_reset_endpoint():
     assert response.json()["status"] == "success"
 
 
+def test_user_cannot_access_another_users_analysis():
+    with TestingSessionLocal() as db:
+        user_a = db.query(User).filter(User.id == TEST_USER_ID).first()
+
+        user_b = (
+            db.query(User)
+            .filter(User.username == "test_user_b")
+            .first()
+        )
+
+        if user_b is None:
+            user_b = User(
+                username="test_user_b",
+                email="test_b@example.com",
+                password_hash=hash_password("test_password_b_123"),
+            )
+            db.add(user_b)
+            db.commit()
+            db.refresh(user_b)
+
+        resume = Resume(
+            user_id=user_a.id,
+            filename="user_a_resume.pdf",
+            file_size=100,
+            version=1,
+            extracted_text="User A resume content",
+        )
+        db.add(resume)
+        db.commit()
+        db.refresh(resume)
+
+        analysis = Analysis(
+            resume_id=resume.id,
+            ats_score=85.0,
+            score_breakdown={},
+            personal_info={},
+            skills=[],
+            ats_checks={},
+            recommendations=[],
+        )
+        db.add(analysis)
+        db.commit()
+        db.refresh(analysis)
+
+        user_b_token = create_access_token(str(user_b.id))
+
+        response = client.get(
+            f"/api/analysis/{analysis.id}",
+            headers={
+                "Authorization": f"Bearer {user_b_token}",
+            },
+        )
+
+        assert response.status_code == 404
+
+
 def test_upload_rejects_unsupported_format():
     response = client.post(
         "/api/upload",
@@ -158,7 +215,10 @@ def test_upload_rejects_unsupported_format():
     )
 
     assert response.status_code == 400
-    assert "Only PDF and DOCX resume files are supported" in response.json()["detail"]
+    assert (
+        "Only PDF and DOCX resume files are supported"
+        in response.json()["detail"]
+    )
 
 
 def test_upload_rejects_empty_file():
