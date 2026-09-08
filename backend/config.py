@@ -39,9 +39,25 @@ class Settings(BaseSettings):
     @property
     def cors_list(self) -> List[str]:
         try:
-            return json.loads(self.cors_origins)
-        except (json.JSONDecodeError, TypeError):
+            origins = json.loads(self.cors_origins)
+        except (json.JSONDecodeError, TypeError) as exc:
+            if self.app_env.lower() == "production":
+                raise ValueError(
+                    "CORS_ORIGINS must be valid JSON in production."
+                ) from exc
             return ["http://localhost:5173"]
+
+        if not isinstance(origins, list) or not all(
+            isinstance(origin, str) and origin.strip()
+            for origin in origins
+        ):
+            if self.app_env.lower() == "production":
+                raise ValueError(
+                    "CORS_ORIGINS must be a non-empty JSON list of origins in production."
+                )
+            return ["http://localhost:5173"]
+
+        return origins
 
     
 settings = Settings()
