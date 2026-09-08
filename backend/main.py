@@ -120,7 +120,7 @@ def get_current_user(
     return user
 
 @app.post("/api/auth/login", response_model=schemas.TokenResponse)
-@limiter.limit("5/minute")
+@limiter.limit(settings.rate_limit_login)
 def login(
     request: Request,
     login_data: schemas.LoginRequest,

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
 
+    rate_limit_login: str = "5/minute"
+
     use_semantic_transformers: bool = True
     sentence_transformer_model: str = "all-MiniLM-L6-v2"
 
@@ -41,5 +43,5 @@ class Settings(BaseSettings):
         except (json.JSONDecodeError, TypeError):
             return ["http://localhost:5173"]
 
-
+    
 settings = Settings()
