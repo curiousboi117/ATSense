@@ -1,12 +1,19 @@
 import axios from 'axios';
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
+
+if (!API_BASE_URL && import.meta.env.PROD) {
+  throw new Error(
+    'VITE_API_URL must be configured for production builds.'
+  );
+}
+
+const API_BASE_URL_FINAL = API_BASE_URL || 'http://127.0.0.1:8000/api';
 
 const TOKEN_KEY = 'atsense_access_token';
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: API_BASE_URL_FINAL,
   timeout: 60000,
 });
 
@@ -121,10 +128,10 @@ export const apiService = {
   },
 
   getPDFReportUrl: (id) => {
-    return `${API_BASE_URL}/report/${id}/pdf`;
+    return `${API_BASE_URL_FINAL}/report/${id}/pdf`;
   },
 
   getJSONReportUrl: (id) => {
-    return `${API_BASE_URL}/report/${id}/json`;
+    return `${API_BASE_URL_FINAL}/report/${id}/json`;
   },
 };
