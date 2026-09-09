@@ -16,6 +16,28 @@ import { apiService } from '../services/api';
 export default function Dashboard() {
   const { currentAnalysis, isLoading } = useAnalyzer();
   const [activeTab, setActiveTab] = useState('skills');
+  const handleDownload = async (type) => {
+  try {
+    const blob = type === 'pdf'
+      ? await apiService.downloadPDFReport(currentAnalysis.id)
+      : await apiService.downloadJSONReport(currentAnalysis.id);
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = type === 'pdf'
+      ? `${currentAnalysis.resume_filename || 'ATSense_Report'}.pdf`
+      : `${currentAnalysis.resume_filename || 'ATSense_Report'}.json`;
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error(`Failed to download ${type.toUpperCase()} report:`, error);
+  }
+};
 
   if (isLoading) {
     return (
@@ -104,24 +126,23 @@ export default function Dashboard() {
 
         {/* Download links */}
         <div className="flex gap-2">
-          <a
-            href={apiService.getPDFReportUrl(currentAnalysis.id)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-secondary px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white flex items-center gap-1.5"
-          >
-            <Download className="w-3.5 h-3.5" />
-            PDF Report
-          </a>
+          <button
+          type="button"
+          onClick={() => handleDownload('pdf')}
+          className="btn-secondary px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white flex items-center gap-1.5"
+        >
+          <Download className="w-3.5 h-3.5" />
+          PDF Report
+        </button>
           
-          <a
-            href={apiService.getJSONReportUrl(currentAnalysis.id)}
-            download
-            className="btn-secondary px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white flex items-center gap-1.5"
-          >
-            <Download className="w-3.5 h-3.5" />
-            JSON Export
-          </a>
+          <button
+          type="button"
+          onClick={() => handleDownload('json')}
+          className="btn-secondary px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white flex items-center gap-1.5"
+        >
+          <Download className="w-3.5 h-3.5" />
+          JSON Export
+        </button>
 
           <Link
             to={`/match-job?resume_id=${currentAnalysis.resume_id}`}
