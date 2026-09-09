@@ -104,6 +104,22 @@ export const apiService = {
     return response.data;
   },
 
+    downloadPDFReport: async (id) => {
+    const response = await api.get(`/report/${id}/pdf`, {
+      responseType: 'blob',
+    });
+
+    return response.data;
+  },
+
+  downloadJSONReport: async (id) => {
+    const response = await api.get(`/report/${id}/json`, {
+      responseType: 'blob',
+    });
+
+    return response.data;
+  },
+
   getPDFReportUrl: (id) => {
     return `${API_BASE_URL}/report/${id}/pdf`;
   },
