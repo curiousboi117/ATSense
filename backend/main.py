@@ -202,7 +202,7 @@ async def upload_resume(
     and return the complete analysis.
     """
     try:
-        content = await file.read()
+        content = await file.read(MAX_RESUME_SIZE + 1)
         filename = file.filename
 
         if not filename:
