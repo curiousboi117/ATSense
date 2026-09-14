@@ -82,7 +82,13 @@ def test_health_endpoint():
 
     data = response.json()
 
-    assert data["status"] == "healthy"
+    expected_status = (
+        "healthy"
+        if data["nlp_loaded"] and data["model_loaded"]
+        else "degraded"
+    )
+
+    assert data["status"] == expected_status
 
 
 def test_login_with_valid_credentials():

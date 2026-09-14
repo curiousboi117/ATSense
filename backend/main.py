@@ -181,13 +181,15 @@ def health_check():
     from preprocessing import nlp
     from similarity_engine import model_loaded, model_name
 
+    nlp_loaded = nlp is not None
+    status = "healthy" if nlp_loaded and model_loaded else "degraded"
+
     return {
-        "status": "healthy",
-        "nlp_loaded": nlp is not None,
+        "status": status,
+        "nlp_loaded": nlp_loaded,
         "model_loaded": model_loaded,
         "model_name": model_name,
     }
-
 
 @app.post("/api/upload", response_model=schemas.AnalysisResponse)
 @limiter.limit(settings.rate_limit_upload)
