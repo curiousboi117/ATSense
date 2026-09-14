@@ -24,7 +24,13 @@ def main():
         user = db.query(User).filter(User.username == USERNAME).first()
 
         if user:
-            print(f"Bootstrap user '{USERNAME}' already exists; skipping.")
+            if os.getenv("BOOTSTRAP_RESET_PASSWORD", "").lower() == "true":
+                user.email = EMAIL
+                user.password_hash = hash_password(PASSWORD)
+                db.commit()
+                print(f"Bootstrap user '{USERNAME}' password reset successfully.")
+            else:
+                print(f"Bootstrap user '{USERNAME}' already exists; skipping.")
             return
 
         user = User(
