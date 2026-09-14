@@ -18,3 +18,4 @@ python-jose[cryptography]>=3.5.0
 pwdlib[argon2]>=0.3.1
 alembic>=1.19.2
 slowapi>=0.1.10
+psycopg[binary]>=3.2.0
