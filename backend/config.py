@@ -9,6 +9,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./atsense.db"
 
+    @model_validator(mode="after")
+    def normalize_database_url(self):
+        if self.database_url.startswith("sqlite:///"):
+            database_path = self.database_url[len("sqlite:///"):]
+
+            if database_path not in {":memory:", ""}:
+                from pathlib import Path
+
+                path = Path(database_path)
+
+                if not path.is_absolute():
+                    path = Path(__file__).resolve().parent / path
+
+                self.database_url = f"sqlite:///{path.as_posix()}"
+
+        return self
+
     cors_origins: str = (
         '["http://localhost:5173","http://127.0.0.1:5173"]'
     )
