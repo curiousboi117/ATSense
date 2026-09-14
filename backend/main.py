@@ -39,18 +39,7 @@ ALLOWED_RESUME_EXTENSIONS = {".pdf", ".docx"}
 async def lifespan(app: FastAPI):
     """Initialize application resources during startup."""
 
-    # Load NLP and semantic models during application startup.
-    try:
-        load_semantic_model()
-    except Exception as e:
-        logger.error(f"Semantic model loading failed: {e}")
-
-    try:
-        from preprocessing import get_nlp
-        get_nlp()
-    except Exception as e:
-        logger.error(f"spaCy model loading failed: {e}")
-
+        # NLP and semantic models are loaded lazily when analysis requires them.
     yield
 
 
