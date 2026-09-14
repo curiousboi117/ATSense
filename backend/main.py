@@ -348,7 +348,9 @@ async def upload_resume(
 
 
 @app.post("/api/match-job", response_model=schemas.AnalysisResponse)
+@limiter.limit(settings.rate_limit_match_job)
 def match_job(
+    request: Request,
     resume_id: int,
     job_description: str = Form(...),
     job_title: Optional[str] = Form("Target Role"),

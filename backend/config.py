@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     rate_limit_login: str = "5/minute"
     rate_limit_upload: str = "10/minute"
+    rate_limit_match_job: str = "10/minute"
 
     use_semantic_transformers: bool = True
     sentence_transformer_model: str = "all-MiniLM-L6-v2"

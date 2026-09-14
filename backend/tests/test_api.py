@@ -138,6 +138,9 @@ def test_login_rate_limit():
 
     assert response.status_code == 429
 
+    limiter._storage.reset()
+
+
 def test_upload_rate_limit():
     limiter._storage.reset()
 
@@ -165,6 +168,35 @@ def test_upload_rate_limit():
                 b"not a resume",
                 "text/plain",
             )
+        },
+    )
+
+    assert response.status_code == 429
+
+    limiter._storage.reset()
+
+
+def test_match_job_rate_limit():
+    limiter._storage.reset()
+
+    for _ in range(10):
+        response = client.post(
+            "/api/match-job",
+            headers=AUTH_HEADERS,
+            params={"resume_id": 999999},
+            data={
+                "job_description": "Python developer",
+            },
+        )
+
+        assert response.status_code == 404
+
+    response = client.post(
+        "/api/match-job",
+        headers=AUTH_HEADERS,
+        params={"resume_id": 999999},
+        data={
+            "job_description": "Python developer",
         },
     )
 
