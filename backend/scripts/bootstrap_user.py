@@ -1,9 +1,12 @@
 import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from auth import hash_password
 from database import SessionLocal
 from models import User
-
 
 USERNAME = os.getenv("BOOTSTRAP_USERNAME", "ats_user")
 EMAIL = os.getenv("BOOTSTRAP_EMAIL", "student@atsense.edu")
