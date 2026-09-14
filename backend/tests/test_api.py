@@ -138,6 +138,40 @@ def test_login_rate_limit():
 
     assert response.status_code == 429
 
+def test_upload_rate_limit():
+    limiter._storage.reset()
+
+    for _ in range(10):
+        response = client.post(
+            "/api/upload",
+            headers=AUTH_HEADERS,
+            files={
+                "file": (
+                    "test.txt",
+                    b"not a resume",
+                    "text/plain",
+                )
+            },
+        )
+
+        assert response.status_code == 400
+
+    response = client.post(
+        "/api/upload",
+        headers=AUTH_HEADERS,
+        files={
+            "file": (
+                "test.txt",
+                b"not a resume",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 429
+
+    limiter._storage.reset()
+
 
 def test_protected_endpoint_requires_authentication():
     response = client.get("/api/history")

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 30
 
     rate_limit_login: str = "5/minute"
+    rate_limit_upload: str = "10/minute"
 
     use_semantic_transformers: bool = True
     sentence_transformer_model: str = "all-MiniLM-L6-v2"

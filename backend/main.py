@@ -190,7 +190,9 @@ def health_check():
 
 
 @app.post("/api/upload", response_model=schemas.AnalysisResponse)
+@limiter.limit(settings.rate_limit_upload)
 async def upload_resume(
+    request: Request,
     file: UploadFile = File(...),
     job_description: Optional[str] = Form(None),
     job_title: Optional[str] = Form("Target Role"),
