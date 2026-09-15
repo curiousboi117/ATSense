@@ -1,3 +1,4 @@
+import os
 import re
 from typing import Dict, Any, List
 from preprocessing import get_nlp
@@ -52,24 +53,39 @@ def extract_personal_info(text: str) -> Dict[str, Any]:
     info["links"] = list(set(links))
     
     # 4. Name extraction heuristics
-    nlp = get_nlp()
     lines = [line.strip() for line in text.split('\n') if line.strip()]
-    
-    # Use spaCy NER to scan first 5 lines for PERSON entities
+    use_spacy_ner = os.getenv("USE_SPACY_NER", "true").lower() == "true"
+
+    # Use spaCy NER only when explicitly enabled.
     candidate_names = []
-    lines_to_check = lines[:5]
-    for line in lines_to_check:
-        # Skip lines that contain email, phone, or links
-        if info["email"] in line or info["phone"] in line or any(l in line for l in info["links"]):
-            continue
-        # Skip lines containing common words
-        if re.search(r'\b(resume|cv|curriculum vitae|page|profile|phone|email|address|contact)\b', line, re.IGNORECASE):
-            continue
-            
-        doc = nlp(line)
-        for ent in doc.ents:
-            if ent.label_ == "PERSON" and len(ent.text.split()) >= 2 and len(ent.text.split()) <= 4:
-                candidate_names.append(ent.text)
+
+    if use_spacy_ner:
+        nlp = get_nlp()
+        lines_to_check = lines[:5]
+
+        for line in lines_to_check:
+            # Skip lines that contain email, phone, or links
+            if info["email"] in line or info["phone"] in line or any(
+                l in line for l in info["links"]
+            ):
+                continue
+
+            # Skip lines containing common words
+            if re.search(
+                r'\b(resume|cv|curriculum vitae|page|profile|phone|email|address|contact)\b',
+                line,
+                re.IGNORECASE,
+            ):
+                continue
+
+            doc = nlp(line)
+
+            for ent in doc.ents:
+                if (
+                    ent.label_ == "PERSON"
+                    and 2 <= len(ent.text.split()) <= 4
+                ):
+                    candidate_names.append(ent.text)
                 
     if candidate_names:
         info["name"] = candidate_names[0]
@@ -84,14 +100,18 @@ def extract_personal_info(text: str) -> Dict[str, Any]:
                 break
                 
     # 5. Location extraction using spaCy GPE/LOC tags in first 10 lines
-    location_candidates = []
-    for line in lines[:10]:
-        doc = nlp(line)
-        for ent in doc.ents:
-            if ent.label_ in ("GPE", "LOC"):
-                location_candidates.append(ent.text)
-    if location_candidates:
-        info["location"] = ", ".join(list(set(location_candidates)))
+    if use_spacy_ner:
+        location_candidates = []
+
+        for line in lines[:10]:
+            doc = nlp(line)
+
+            for ent in doc.ents:
+                if ent.label_ in ("GPE", "LOC"):
+                    location_candidates.append(ent.text)
+
+        if location_candidates:
+            info["location"] = ", ".join(list(set(location_candidates)))
         
     return info
 
