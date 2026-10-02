@@ -25,6 +25,19 @@ class GeminiResumeInsights(BaseModel):
     evidence: List[GeminiEvidence] = Field(default_factory=list)
 
 
+class GeminiJobMatch(BaseModel):
+    """Structured semantic matching evidence for a resume against a job description."""
+
+    semantic_score: float = Field(
+        ge=0.0,
+        le=100.0,
+        description="Semantic alignment from 0 to 100 based only on the supplied resume and job description.",
+    )
+    matched_concepts: List[str] = Field(default_factory=list)
+    missing_concepts: List[str] = Field(default_factory=list)
+    rationale: str = Field(description="Short factual explanation of the semantic match.")
+
+
 _client = None
 
 
@@ -46,6 +59,33 @@ def get_client():
         _client = _create_client()
 
     return _client
+
+
+def _generate_structured(
+    prompt: str,
+    response_schema: type[BaseModel],
+) -> BaseModel:
+    """Generate and validate a structured Gemini response."""
+    client = get_client()
+
+    from google.genai import types
+
+    response = client.models.generate_content(
+        model=settings.gemini_model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=response_schema,
+        ),
+    )
+
+    if getattr(response, "parsed", None) is not None:
+        return response_schema.model_validate(response.parsed)
+
+    if not getattr(response, "text", None):
+        raise RuntimeError("Gemini returned an empty response.")
+
+    return response_schema.model_validate_json(response.text)
 
 
 def analyze_resume_with_gemini(
@@ -71,23 +111,38 @@ JOB DESCRIPTION:
 Return structured evidence for resume quality, relevant skills, missing skills, and actionable recommendations.
 """.strip()
 
-    client = get_client()
+    return _generate_structured(prompt, GeminiResumeInsights)  # type: ignore[return-value]
 
-    from google.genai import types
 
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=GeminiResumeInsights,
-        ),
-    )
+def match_resume_to_job_with_gemini(
+    resume_text: str,
+    job_description: str,
+) -> GeminiJobMatch:
+    """Compare a resume and job description using Gemini without loading a local model."""
+    if not settings.gemini_enabled:
+        raise RuntimeError("Gemini integration is disabled.")
 
-    if getattr(response, "parsed", None) is not None:
-        return GeminiResumeInsights.model_validate(response.parsed)
+    if not job_description.strip():
+        raise ValueError("Job description cannot be empty.")
 
-    if not getattr(response, "text", None):
-        raise RuntimeError("Gemini returned an empty response.")
+    prompt = f"""
+You are the semantic matching engine for ATSense.
+Compare ONLY the supplied resume and job description.
 
-    return GeminiResumeInsights.model_validate_json(response.text)
+Rules:
+- Do not invent qualifications, experience, or skills.
+- Judge semantic alignment, including equivalent terminology and related responsibilities.
+- Return a semantic alignment score from 0 to 100.
+- List the most important concepts clearly supported by both texts as matched_concepts.
+- List important job requirements that are not supported by the resume as missing_concepts.
+- Keep the rationale concise and factual.
+- Do not calculate ATSense's final score.
+
+RESUME:
+{resume_text}
+
+JOB DESCRIPTION:
+{job_description}
+""".strip()
+
+    return _generate_structured(prompt, GeminiJobMatch)  # type: ignore[return-value]
