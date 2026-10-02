@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     use_semantic_transformers: bool = True
     sentence_transformer_model: str = "all-MiniLM-L6-v2"
 
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_enabled: bool = True
+
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(__file__), ".env"),
         case_sensitive=False,
